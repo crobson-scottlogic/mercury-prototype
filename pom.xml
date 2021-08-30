@@ -43,6 +43,12 @@
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<version>1.18.20</version>
+			<scope>provided</scope>
+		</dependency>
 	</dependencies>
 	<build>
 		<plugins>
@@ -62,8 +68,9 @@
 					</execution>
 				</executions>
 				<configuration>
-					<mainClass>com.robsonc.solace.data.jpa.SampleDataRestApplication</mainClass>
+					<mainClass>com.robsonc.solace.data.jpa.PrototypeMercury</mainClass>
 				</configuration>
+
 			</plugin>
 			<plugin>
 				<artifactId>maven-compiler-plugin</artifactId>

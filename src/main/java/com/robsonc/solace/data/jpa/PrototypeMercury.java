@@ -24,9 +24,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @ComponentScan
 @EnableAutoConfiguration
-public class SampleDataRestApplication {
+public class PrototypeMercury {
 
-	public static void main(String[] args) throws Exception {
-		SpringApplication.run(SampleDataRestApplication.class, args);
+	public static void main(final String[] args) throws Exception {
+		SpringApplication.run(PrototypeMercury.class, args);
 	}
 }
