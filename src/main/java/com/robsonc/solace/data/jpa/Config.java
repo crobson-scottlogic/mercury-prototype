@@ -15,6 +15,7 @@ public class Config {
 	@Value("${solace.username:}")
 	private String username;
 
+	//No! This should not be a hardcoded property of the application but must be chosen by clients
 	@Value("${solace.vpn_name:default}")
 	private String vpnName;
 

@@ -3,7 +3,6 @@ package com.robsonc.solace.data.jpa.service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -40,7 +39,7 @@ public class SolaceWrapper implements MessageBusWrapper {
 	private JCSMPProperties properties;
 
 	@Override
-	public Future<Object> writeMessageToQueue(String queueName, String payload) {
+	public Future<Object> writeMessageToQueue(String queueName, String payload, String messageId) {
 		System.out.println("Going to write message to the queue: " + queueName + " - " + payload);
 		Future<Object> future = null;
 		try {
@@ -72,8 +71,7 @@ public class SolaceWrapper implements MessageBusWrapper {
 			TextMessage msg = JCSMPFactory.onlyInstance().createMessage(TextMessage.class);
 			msg.setDeliveryMode(DeliveryMode.PERSISTENT);
 			msg.setText(payload);
-			UUID randomUUID = UUID.randomUUID();
-			msg.setApplicationMessageId(randomUUID.toString());
+			msg.setApplicationMessageId(messageId);
 
 			final MsgInfo msgCorrelationInfo = new MsgInfo(1);
 			msgCorrelationInfo.sessionIndependentMessage = msg;

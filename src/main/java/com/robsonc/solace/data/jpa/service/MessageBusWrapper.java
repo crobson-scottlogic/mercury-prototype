@@ -6,7 +6,7 @@ import java.util.concurrent.Future;
 import com.robsonc.solace.data.jpa.service.SolaceWrapper.MessageWithId;
 
 public interface MessageBusWrapper {
-	Future<Object> writeMessageToQueue(String queueName, String payload);
+	Future<Object> writeMessageToQueue(String queueName, String payload, String messageId);
 	List<MessageWithId> getLatestUnreadMessages(String queueName);
 	MessageWithId getLatestUnreadMessage(String queueName);
 	void ackMessage(String queueName, String targetMessageId);

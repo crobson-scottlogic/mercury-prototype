@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class MessageInDto {
 	private String payload;
+	private String messageVpn;
 	private String destination;
 	private String destinationType;
 }
