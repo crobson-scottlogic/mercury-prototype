@@ -1,9 +1,6 @@
 package com.robsonc.solace.data.jpa.resource;
 
 import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.robsonc.solace.data.jpa.domain.Message;
@@ -43,8 +40,9 @@ public class RestResource {
 		List<Message> messages = repository.findAll();
 		System.out.println("Requested messages. Got list of size: " + messages.size());
 		Message message = new Message(messageInDto.getPayload());
+		//dcfgdhtgtf;
 		repository.save(message);
-		var future = messageBusWrapper.writeMessageToQueue(messageInDto.getQueueName(), messageInDto.getPayload());
+		var future = messageBusWrapper.writeMessageToQueue(messageInDto.getDestination(), messageInDto.getPayload());
 		try {
 			Object key = future.get(10, TimeUnit.SECONDS);
 			String responseBody = "Received: " + key;

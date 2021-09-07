@@ -9,5 +9,6 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class MessageInDto {
 	private String payload;
-	private String queueName;
+	private String destination;
+	private String destinationType;
 }

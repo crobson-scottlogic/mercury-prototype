@@ -33,6 +33,11 @@
 		</dependency>
 		<!-- https://mvnrepository.com/artifact/com.solacesystems/sol-jcsmp -->
 		<dependency>
+			<groupId>javax.annotation</groupId>
+			<artifactId>javax.annotation-api</artifactId>
+			<version>1.3.2</version>
+		</dependency>
+		<dependency>
 			<groupId>com.solacesystems</groupId>
 			<artifactId>sol-jcsmp</artifactId>
 			<version>10.12.0</version>
