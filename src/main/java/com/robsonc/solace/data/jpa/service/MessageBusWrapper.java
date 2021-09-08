@@ -10,5 +10,5 @@ public interface MessageBusWrapper {
 	List<MessageWithId> getLatestUnreadMessages(String queueName);
 	MessageWithId getLatestUnreadMessage(String queueName);
 	void ackMessage(String queueName, String targetMessageId);
-	List<MessageWithId> replay(String queueName, Long timestamp);
+	List<MessageWithId> replay(String queueName, Long timestamp) throws Exception;
 }

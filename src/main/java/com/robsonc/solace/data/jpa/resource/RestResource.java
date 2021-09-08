@@ -84,10 +84,15 @@ public class RestResource {
 		messageBusWrapper.ackMessage(queueName, messageId);
 	}
 
-	@GetMapping(value = "/replay")
-	public List<MessageWithId> replay(@RequestParam(name = "queue") String queueName, @RequestParam(name = "replayTime") Long replayTime) {
+	@GetMapping(value = "/replay", produces = "APPLICATION/JSON")
+	public List<MessageWithId> replay(@RequestParam(name = "queue") String queueName, @RequestParam(name = "replayTime", required = false) Long replayTime) {
 		System.out.println("Replaying queue " + queueName + " from " + replayTime);
-		return messageBusWrapper.replay(queueName, replayTime);
+		try {
+			return messageBusWrapper.replay(queueName, replayTime);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return null;
+		}
 	}
 
 	@GetMapping(value = "/search", produces = "APPLICATION/JSON")

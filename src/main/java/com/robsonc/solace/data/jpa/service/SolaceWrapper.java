@@ -1,8 +1,11 @@
 package com.robsonc.solace.data.jpa.service;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Objects;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -13,22 +16,33 @@ import java.util.concurrent.TimeUnit;
 import com.solacesystems.jcsmp.Browser;
 import com.solacesystems.jcsmp.BrowserProperties;
 import com.solacesystems.jcsmp.BytesXMLMessage;
+import com.solacesystems.jcsmp.CapabilityType;
+import com.solacesystems.jcsmp.ConsumerFlowProperties;
 import com.solacesystems.jcsmp.DeliveryMode;
 import com.solacesystems.jcsmp.EndpointProperties;
+import com.solacesystems.jcsmp.FlowEvent;
+import com.solacesystems.jcsmp.FlowEventArgs;
+import com.solacesystems.jcsmp.FlowEventHandler;
+import com.solacesystems.jcsmp.FlowReceiver;
 import com.solacesystems.jcsmp.InvalidPropertiesException;
+import com.solacesystems.jcsmp.JCSMPErrorResponseException;
+import com.solacesystems.jcsmp.JCSMPErrorResponseSubcodeEx;
 import com.solacesystems.jcsmp.JCSMPException;
 import com.solacesystems.jcsmp.JCSMPFactory;
 import com.solacesystems.jcsmp.JCSMPProperties;
 import com.solacesystems.jcsmp.JCSMPSession;
 import com.solacesystems.jcsmp.JCSMPStreamingPublishCorrelatingEventHandler;
 import com.solacesystems.jcsmp.Queue;
+import com.solacesystems.jcsmp.ReplayStartLocation;
 import com.solacesystems.jcsmp.TextMessage;
+import com.solacesystems.jcsmp.XMLMessageListener;
 import com.solacesystems.jcsmp.XMLMessageProducer;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import lombok.Data;
+import lombok.Getter;
 
 @Component
 public class SolaceWrapper implements MessageBusWrapper {
@@ -90,8 +104,9 @@ public class SolaceWrapper implements MessageBusWrapper {
 	@Override
 	public List<MessageWithId> getLatestUnreadMessages(String queueName) {
 		List<MessageWithId> messages = new ArrayList<>();
+		JCSMPSession session = null;
 		try {
-			final JCSMPSession session = JCSMPFactory.onlyInstance().createSession(properties);
+			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
 			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
 			BrowserProperties browserProperties = new BrowserProperties();
@@ -115,7 +130,12 @@ public class SolaceWrapper implements MessageBusWrapper {
 					System.out.println("sequence id: " + seqNo);
 					Long ackMessageId = rxMsg.getAckMessageId();
 					System.out.println("ack message id: " + ackMessageId);
-					String payload = new String(rxMsg.getAttachmentByteBuffer().array());
+					final String payload;
+					if (rxMsg instanceof TextMessage) {
+						payload = ((TextMessage)rxMsg).getText();
+					} else {
+						payload = new String(rxMsg.getAttachmentByteBuffer().array());
+					}
 					System.out.println("PAYLOAD: " + payload);
 					messages.add(new MessageWithId(messageId, payload));
 				}
@@ -127,6 +147,10 @@ public class SolaceWrapper implements MessageBusWrapper {
 			e.printStackTrace();
 		} catch (JCSMPException e) {
 			e.printStackTrace();
+		} finally {
+			if (session != null) {
+				session.closeSession();
+			}
 		}
 		return messages;
 	}
@@ -134,8 +158,9 @@ public class SolaceWrapper implements MessageBusWrapper {
 	@Override
 	public MessageWithId getLatestUnreadMessage(String queueName) {
 		MessageWithId lastMessage = null;
+		JCSMPSession session = null;
 		try {
-			final JCSMPSession session = JCSMPFactory.onlyInstance().createSession(properties);
+			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
 			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
 			BrowserProperties browserProperties = new BrowserProperties();
@@ -149,7 +174,12 @@ public class SolaceWrapper implements MessageBusWrapper {
 				if (rxMsg != null) {
 					String messageId = rxMsg.getApplicationMessageId();
 					System.out.println("message id: " + messageId);
-					String payload = new String(rxMsg.getAttachmentByteBuffer().array());
+					final String payload;
+					if (rxMsg instanceof TextMessage) {
+						payload = ((TextMessage)rxMsg).getText();
+					} else {
+						payload = new String(rxMsg.getAttachmentByteBuffer().array());
+					}
 					System.out.println("PAYLOAD: " + payload);
 					if (payload != null) {
 						lastMessage = new MessageWithId(messageId, payload);
@@ -160,14 +190,19 @@ public class SolaceWrapper implements MessageBusWrapper {
 			e.printStackTrace();
 		} catch (JCSMPException e) {
 			e.printStackTrace();
+		} finally {
+			if (session != null) {
+				session.closeSession();
+			}
 		}
 		return lastMessage;
 	}
 
 	@Override
 	public void ackMessage(String queueName, String targetMessageId) {
+		JCSMPSession session = null;
 		try {
-			final JCSMPSession session = JCSMPFactory.onlyInstance().createSession(properties);
+			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
 			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
 			BrowserProperties browserProperties = new BrowserProperties();
@@ -192,6 +227,148 @@ public class SolaceWrapper implements MessageBusWrapper {
 			e.printStackTrace();
 		} catch (JCSMPException e) {
 			e.printStackTrace();
+		} finally {
+			if (session != null) {
+				session.closeSession();
+			}
+		}
+	}
+
+	@Override
+	public List<MessageWithId> replay(String queueName, Long timestamp) throws Exception {
+		JCSMPSession session = null;
+		try {
+			session = JCSMPFactory.onlyInstance().createSession(properties);
+			session.connect();
+			if (!session.isCapable(CapabilityType.MESSAGE_REPLAY)) {
+				throw new Exception("Broker not capable of replaying messages");
+			}
+			final ReplayStartLocation replayStart;
+			if (timestamp != null) {
+				Date startDate = new Date(timestamp);
+				replayStart = JCSMPFactory.onlyInstance().createReplayStartLocationDate(startDate);
+			} else {
+				replayStart = JCSMPFactory.onlyInstance().createReplayStartLocationBeginning();
+			}
+			Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
+			ConsumerFlowProperties consumerFlowProperties = new ConsumerFlowProperties();
+			consumerFlowProperties.setEndpoint(queue);
+			// crucial to making sure the message is not acknowledged by the replay
+			consumerFlowProperties.setAckMode(JCSMPProperties.SUPPORTED_MESSAGE_ACK_CLIENT);
+			consumerFlowProperties.setReplayStartLocation(replayStart);
+			
+			ReplayFlowEventHandler consumerEventHandler = new ReplayFlowEventHandler();
+			List<MessageWithId> list = new ArrayList<>();
+			final CountDownLatch latch = new CountDownLatch(1);
+			ReplayListener listener = new ReplayListener(latch, list);
+			
+			FlowReceiver flowReceiver = session.createFlow(listener, consumerFlowProperties, null, consumerEventHandler);
+			flowReceiver.start();
+			latch.await(10, TimeUnit.SECONDS);
+
+			return list;
+		} catch (InvalidPropertiesException e) {
+			e.printStackTrace();
+		} finally {
+			if (session != null) {
+				System.out.println("Closing the session down!!!");
+				session.closeSession();
+			}
+		}
+		return null;
+	}
+
+	@Data
+	private static class ReplayListener implements XMLMessageListener {
+		private final CountDownLatch latch;
+		private TimerTask timerTask;
+		private final List<MessageWithId> messages;
+
+		ReplayListener(CountDownLatch latch, List<MessageWithId> messages) {
+			this.latch = latch;
+			this.messages = messages;
+			Timer timer = new Timer();
+			timerTask = new TimerTask(){
+				@Override
+				public void run() {
+					latch.countDown();
+				}
+			};
+			timer.schedule(timerTask, 500);
+		}
+
+		@Override
+		public void onException(JCSMPException e) {
+			System.out.println("Error during replay msg: " + e);
+			e.printStackTrace();
+			timerTask.cancel();
+			// immediately cancel
+			timerTask.run();
+		}
+
+		@Override
+		public void onReceive(BytesXMLMessage msg) {
+			timerTask.cancel();
+			System.out.println("Received replay msg");
+
+			boolean isRedelivered = msg.getRedelivered();
+			if (msg instanceof TextMessage) {
+				TextMessage txtMsg = (TextMessage) msg;
+				String content = txtMsg.getText();
+				MessageWithId messageWithId = new MessageWithId(txtMsg.getApplicationMessageId(), content);
+				messages.add(messageWithId);
+			} else {
+				String content = new String(msg.getAttachmentByteBuffer().array());
+				MessageWithId messageWithId = new MessageWithId(msg.getApplicationMessageId(), content);
+				messages.add(messageWithId);
+			}
+			System.out.println("Message: " + messages.get(messages.size() - 1) + " is redelivered? " + isRedelivered);
+			// not supported on the EndPoint
+			//System.out.println("delivery count: " + msg.getDeliveryCount());
+			//System.out.println("delivery mode: " + msg.getDeliveryMode());
+			System.out.println("properties: " + msg.getProperties());
+			// cancel if no new messages in next second
+			Timer timer = new Timer();
+			timerTask = new TimerTask(){
+				@Override
+				public void run() {
+					latch.countDown();
+				}
+			};
+			timer.schedule(timerTask, 30 * 1000);
+		}
+	}
+
+	private static class ReplayFlowEventHandler implements FlowEventHandler {
+		@Getter
+		private volatile int replayErrorResponseSubcode = JCSMPErrorResponseSubcodeEx.UNKNOWN;
+
+		@Override
+		public void handleEvent(Object source, FlowEventArgs event) {
+			System.out.println("Consumer received flow event: " + event);
+			if (event.getEvent() == FlowEvent.FLOW_DOWN) {
+				if (event.getException() instanceof JCSMPErrorResponseException) {
+					JCSMPErrorResponseException ex = (JCSMPErrorResponseException) event.getException();
+					replayErrorResponseSubcode = ex.getSubcodeEx();
+
+					switch (replayErrorResponseSubcode) {
+						case JCSMPErrorResponseSubcodeEx.REPLAY_STARTED:
+						case JCSMPErrorResponseSubcodeEx.REPLAY_FAILED:
+						case JCSMPErrorResponseSubcodeEx.REPLAY_CANCELLED:
+						case JCSMPErrorResponseSubcodeEx.REPLAY_LOG_MODIFIED:
+						case JCSMPErrorResponseSubcodeEx.REPLAY_START_TIME_NOT_AVAILABLE:
+						case JCSMPErrorResponseSubcodeEx.REPLAY_MESSAGE_UNAVAILABLE:
+						case JCSMPErrorResponseSubcodeEx.REPLAYED_MESSAGE_REJECTED:
+							break;
+						default:
+							break;
+					}
+				} else {
+					System.out.println("Got different type of exception: " + event.getException());
+				}
+			} else {
+				System.out.println("Got replay event: " + event.getEvent());
+			}
 		}
 	}
 
@@ -246,10 +423,5 @@ public class SolaceWrapper implements MessageBusWrapper {
 	public static class MessageWithId {
 		private final String id;
 		private final String payload;
-	}
-
-	@Override
-	public List<MessageWithId> replay(String queueName, Long timestamp) {
-		return null;
 	}
 }
