@@ -49,7 +49,7 @@ public class RestResource {
 		var message = new QueueMessage(messageInDto.getPayload(), messageInDto.getMessageVpn(), messageInDto.getDestination(), DestinationType.valueOf(messageInDto.getDestinationType().toUpperCase()), uuid);
 		repository.save(message);
 
-		var future = messageBusWrapper.writeMessageToQueue(messageInDto.getDestination(), messageInDto.getPayload(), uuid);
+		var future = messageBusWrapper.writeMessageToQueue(messageInDto.getDestination(), messageInDto.getPayload(), uuid, messageInDto.getMessageVpn());
 		try {
 			Object key = future.get(10, TimeUnit.SECONDS);
 			String responseBody = "Received: " + key;
@@ -61,34 +61,34 @@ public class RestResource {
 	}
 
 	@GetMapping(value = "/getall", produces = "APPLICATION/JSON")
-	public List<MessageWithId> getLatestMessages(@RequestParam(name = "queue") String queueName) {
+	public List<MessageWithId> getLatestMessages(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
 		System.out.println("============================");
 		System.out.println("queueName: " + queueName);
 		System.out.println("============================");
-		return messageBusWrapper.getLatestUnreadMessages(queueName);
+		return messageBusWrapper.getLatestUnreadMessages(queueName, vpn);
 	}
 
 	@GetMapping(value = "/get", produces = "APPLICATION/JSON")
-	public MessageWithId getLatestMessage(@RequestParam(name = "queue") String queueName) {
-		return messageBusWrapper.getLatestUnreadMessage(queueName);
+	public MessageWithId getLatestMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
+		return messageBusWrapper.getLatestUnreadMessage(queueName, vpn);
 	}
 	
 	@GetMapping(value = "/next", produces = "APPLICATION/JSON")
-	public MessageWithId getEarliestUnackedMessage(@RequestParam(name = "queue") String queueName) {
-		return null;
+	public MessageWithId getEarliestUnackedMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
+		return messageBusWrapper.getEarliestUnreadMessage(queueName, vpn);
 	}
 	
 	@GetMapping(value = "/ack")
-	public void ackMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "msg", required = false) String messageId) {
+	public void ackMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "msg", required = false) String messageId, @RequestParam(name = "vpn", required = false) String vpn) {
 		System.out.println("Message ID is: " + messageId);
-		messageBusWrapper.ackMessage(queueName, messageId);
+		messageBusWrapper.ackMessage(queueName, messageId, vpn);
 	}
 
 	@GetMapping(value = "/replay", produces = "APPLICATION/JSON")
-	public List<MessageWithId> replay(@RequestParam(name = "queue") String queueName, @RequestParam(name = "replayTime", required = false) Long replayTime) {
-		System.out.println("Replaying queue " + queueName + " from " + replayTime);
+	public List<MessageWithId> replay(@RequestParam(name = "queue") String queueName, @RequestParam(name = "replayTime", required = false) Long replayTime, @RequestParam(name = "vpn", required = false) String vpn) {
+		System.out.println("Replaying queue " + queueName + " from " + new java.util.Date(replayTime));
 		try {
-			return messageBusWrapper.replay(queueName, replayTime);
+			return messageBusWrapper.replay(queueName, replayTime, vpn);
 		} catch (Exception e) {
 			e.printStackTrace();
 			return null;

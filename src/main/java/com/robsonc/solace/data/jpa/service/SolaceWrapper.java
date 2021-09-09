@@ -47,16 +47,22 @@ import lombok.Getter;
 @Component
 public class SolaceWrapper implements MessageBusWrapper {
 
+	private static final String DEFAULT_VPN = "testservice";
+
 	private ExecutorService executor = Executors.newFixedThreadPool(3);
 
 	@Autowired
 	private JCSMPProperties properties;
 
 	@Override
-	public Future<Object> writeMessageToQueue(String queueName, String payload, String messageId) {
+	public Future<Object> writeMessageToQueue(String queueName, String payload, String messageId, String vpn) {
 		System.out.println("Going to write message to the queue: " + queueName + " - " + payload);
 		Future<Object> future = null;
 		try {
+			if (vpn == null) {
+				vpn = DEFAULT_VPN;
+			}
+			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
 			final JCSMPSession session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
 
@@ -90,7 +96,7 @@ public class SolaceWrapper implements MessageBusWrapper {
 			final MsgInfo msgCorrelationInfo = new MsgInfo(1);
 			msgCorrelationInfo.sessionIndependentMessage = msg;
 			msg.setCorrelationKey(msgCorrelationInfo);
-			
+
 			producer.send(msg, queue);
 
 		} catch (InvalidPropertiesException e) {
@@ -102,10 +108,15 @@ public class SolaceWrapper implements MessageBusWrapper {
 	}
 
 	@Override
-	public List<MessageWithId> getLatestUnreadMessages(String queueName) {
+	public List<MessageWithId> getLatestUnreadMessages(String queueName, String vpn) {
+		System.out.println("VPN IS " + vpn);
 		List<MessageWithId> messages = new ArrayList<>();
 		JCSMPSession session = null;
 		try {
+			if (vpn == null) {
+				vpn = DEFAULT_VPN;
+			}
+			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
 			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
 			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
@@ -156,10 +167,14 @@ public class SolaceWrapper implements MessageBusWrapper {
 	}
 
 	@Override
-	public MessageWithId getLatestUnreadMessage(String queueName) {
+	public MessageWithId getLatestUnreadMessage(String queueName, String vpn) {
 		MessageWithId lastMessage = null;
 		JCSMPSession session = null;
 		try {
+			if (vpn == null) {
+				vpn = DEFAULT_VPN;
+			}
+			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
 			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
 			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
@@ -199,9 +214,61 @@ public class SolaceWrapper implements MessageBusWrapper {
 	}
 
 	@Override
-	public void ackMessage(String queueName, String targetMessageId) {
+	public MessageWithId getEarliestUnreadMessage(String queueName, String vpn) {
+		MessageWithId firstMessage = null;
 		JCSMPSession session = null;
 		try {
+			if (vpn == null) {
+				vpn = DEFAULT_VPN;
+			}
+			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
+			session = JCSMPFactory.onlyInstance().createSession(properties);
+			session.connect();
+			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
+			BrowserProperties browserProperties = new BrowserProperties();
+			browserProperties.setEndpoint(queue);
+			browserProperties.setTransportWindowSize(1);
+			browserProperties.setWaitTimeout(1000);
+			Browser browser = session.createBrowser(browserProperties);
+			BytesXMLMessage rxMsg = null;
+			do {
+				rxMsg = browser.getNext();
+				System.out.println("Got message: " + rxMsg);
+				if (rxMsg != null) {
+					String messageId = rxMsg.getApplicationMessageId();
+					System.out.println("message id: " + messageId);
+					final String payload;
+					if (rxMsg instanceof TextMessage) {
+						payload = ((TextMessage)rxMsg).getText();
+					} else {
+						payload = new String(rxMsg.getAttachmentByteBuffer().array());
+					}
+					System.out.println("PAYLOAD: " + payload);
+					if (payload != null) {
+						firstMessage = new MessageWithId(messageId, payload);
+					}
+				}
+			} while (firstMessage == null && rxMsg != null);
+		} catch (InvalidPropertiesException e) {
+			e.printStackTrace();
+		} catch (JCSMPException e) {
+			e.printStackTrace();
+		} finally {
+			if (session != null) {
+				session.closeSession();
+			}
+		}
+		return firstMessage;
+	}
+
+	@Override
+	public void ackMessage(String queueName, String targetMessageId, String vpn) {
+		JCSMPSession session = null;
+		try {
+			if (vpn == null) {
+				vpn = DEFAULT_VPN;
+			}
+			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
 			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
 			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
@@ -235,9 +302,13 @@ public class SolaceWrapper implements MessageBusWrapper {
 	}
 
 	@Override
-	public List<MessageWithId> replay(String queueName, Long timestamp) throws Exception {
+	public List<MessageWithId> replay(String queueName, Long timestamp, String vpn) throws Exception {
 		JCSMPSession session = null;
 		try {
+			if (vpn == null) {
+				vpn = DEFAULT_VPN;
+			}
+			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
 			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
 			if (!session.isCapable(CapabilityType.MESSAGE_REPLAY)) {
@@ -256,12 +327,12 @@ public class SolaceWrapper implements MessageBusWrapper {
 			// crucial to making sure the message is not acknowledged by the replay
 			consumerFlowProperties.setAckMode(JCSMPProperties.SUPPORTED_MESSAGE_ACK_CLIENT);
 			consumerFlowProperties.setReplayStartLocation(replayStart);
-			
+
 			ReplayFlowEventHandler consumerEventHandler = new ReplayFlowEventHandler();
 			List<MessageWithId> list = new ArrayList<>();
 			final CountDownLatch latch = new CountDownLatch(1);
 			ReplayListener listener = new ReplayListener(latch, list);
-			
+
 			FlowReceiver flowReceiver = session.createFlow(listener, consumerFlowProperties, null, consumerEventHandler);
 			flowReceiver.start();
 			latch.await(10, TimeUnit.SECONDS);
@@ -335,7 +406,7 @@ public class SolaceWrapper implements MessageBusWrapper {
 					latch.countDown();
 				}
 			};
-			timer.schedule(timerTask, 30 * 1000);
+			timer.schedule(timerTask, 500);
 		}
 	}
 
@@ -402,12 +473,12 @@ public class SolaceWrapper implements MessageBusWrapper {
 		}
 
 		@Override
-	    public void handleError(java.lang.String messageID, com.solacesystems.jcsmp.JCSMPException cause, long timestamp) {
-	    }
-	  
+		public void handleError(java.lang.String messageID, com.solacesystems.jcsmp.JCSMPException cause, long timestamp) {
+		}
+
 		@Override
-	    public void responseReceived(java.lang.String messageID) {
-	    }
+		public void responseReceived(java.lang.String messageID) {
+		}
 
 		public Object getKey() {
 			try {
