@@ -67,19 +67,19 @@ public class RestResource {
 	@GetMapping(value = "/getall", produces = "APPLICATION/JSON")
 	public List<MessageWithId> getLatestMessages(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
 		log.info("Getting all for queueName: {}", queueName);
-		return messageBusWrapper.getLatestUnreadMessages(queueName, vpn);
+		return messageBusWrapper.peekAllUnackedMessages(queueName, vpn);
 	}
 
 	@GetMapping(value = "/get", produces = "APPLICATION/JSON")
 	public MessageWithId getLatestMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
 		log.info("Getting latest message for queueName: {}", queueName);
-		return messageBusWrapper.getLatestUnreadMessage(queueName, vpn);
+		return messageBusWrapper.peekLatestUnackedMessage(queueName, vpn);
 	}
 	
 	@GetMapping(value = "/next", produces = "APPLICATION/JSON")
 	public MessageWithId getEarliestUnackedMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
 		log.info("Getting earliest unacked message for queueName: {}", queueName);
-		return messageBusWrapper.getEarliestUnreadMessage(queueName, vpn);
+		return messageBusWrapper.peekEarliestUnackedMessage(queueName, vpn);
 	}
 	
 	@GetMapping(value = "/ack")

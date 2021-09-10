@@ -12,6 +12,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiPredicate;
 
 import com.solacesystems.jcsmp.Browser;
 import com.solacesystems.jcsmp.BrowserProperties;
@@ -43,8 +44,10 @@ import org.springframework.stereotype.Component;
 
 import lombok.Data;
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 
 @Component
+@Slf4j
 public class SolaceWrapper implements MessageBusWrapper {
 
 	private static final String DEFAULT_VPN = "testservice";
@@ -56,7 +59,7 @@ public class SolaceWrapper implements MessageBusWrapper {
 
 	@Override
 	public Future<Object> writeMessageToQueue(String queueName, String payload, String messageId, String vpn) {
-		System.out.println("Going to write message to the queue: " + queueName + " - " + payload);
+		log.info("Going to write message to the queue: {} - {}", queueName, payload);
 		Future<Object> future = null;
 		try {
 			if (vpn == null) {
@@ -72,6 +75,7 @@ public class SolaceWrapper implements MessageBusWrapper {
 			endpointProperties.setPermission(EndpointProperties.PERMISSION_CONSUME);
 			endpointProperties.setAccessType(EndpointProperties.ACCESSTYPE_EXCLUSIVE);
 
+			// TODO: test if this is needed when you know that the queue already exists?
 			session.provision(queue, endpointProperties, JCSMPSession.FLAG_IGNORE_ALREADY_EXISTS);
 			final CountDownLatch latch = new CountDownLatch(1);
 			final PubCallback pubCallback = new PubCallback(latch);
@@ -99,17 +103,13 @@ public class SolaceWrapper implements MessageBusWrapper {
 
 			producer.send(msg, queue);
 
-		} catch (InvalidPropertiesException e) {
-			e.printStackTrace();
 		} catch (JCSMPException e) {
-			e.printStackTrace();
+			log.error("Error encountered when writing message to the queue", e);
 		}
 		return future;
 	}
 
-	@Override
-	public List<MessageWithId> getLatestUnreadMessages(String queueName, String vpn) {
-		System.out.println("VPN IS " + vpn);
+	private List<MessageWithId> peekUnackedMessages(String queueName, String vpn, BiPredicate<BytesXMLMessage, MessageWithId> loopCondition) {
 		List<MessageWithId> messages = new ArrayList<>();
 		JCSMPSession session = null;
 		try {
@@ -119,41 +119,29 @@ public class SolaceWrapper implements MessageBusWrapper {
 			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
 			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
-			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
-			BrowserProperties browserProperties = new BrowserProperties();
-			browserProperties.setEndpoint(queue);
-			browserProperties.setTransportWindowSize(1);
-			browserProperties.setWaitTimeout(1000);
-			Browser browser = session.createBrowser(browserProperties);
+			Browser browser = createBrowser(queueName, session);
 			int msgCount = 0;
 			BytesXMLMessage rxMsg = null;
+			MessageWithId currentMessage = null;
 			do {
 				rxMsg = browser.getNext();
 				if (rxMsg != null) {
 					msgCount++;
-					System.out.println("Browser got message... dumping:");
-					System.out.println(rxMsg.dump());
 					String messageId = rxMsg.getApplicationMessageId();
-					String correlationId = rxMsg.getCorrelationId();
-					Long seqNo = rxMsg.getSequenceNumber();
-					System.out.println("message id: " + messageId);
-					System.out.println("correlation id: " + correlationId);
-					System.out.println("sequence id: " + seqNo);
-					Long ackMessageId = rxMsg.getAckMessageId();
-					System.out.println("ack message id: " + ackMessageId);
 					final String payload;
 					if (rxMsg instanceof TextMessage) {
 						payload = ((TextMessage)rxMsg).getText();
 					} else {
 						payload = new String(rxMsg.getAttachmentByteBuffer().array());
 					}
-					System.out.println("PAYLOAD: " + payload);
-					messages.add(new MessageWithId(messageId, payload));
+					log.info("message ID: {}, PAYLOAD: {}", payload);
+					currentMessage = new MessageWithId(messageId, payload);
+					messages.add(currentMessage);
 				}
 				if (msgCount++ > 100) {
 					break;
 				}
-			} while (rxMsg != null);
+			} while (loopCondition.test(rxMsg, currentMessage));
 		} catch (InvalidPropertiesException e) {
 			e.printStackTrace();
 		} catch (JCSMPException e) {
@@ -167,98 +155,42 @@ public class SolaceWrapper implements MessageBusWrapper {
 	}
 
 	@Override
-	public MessageWithId getLatestUnreadMessage(String queueName, String vpn) {
-		MessageWithId lastMessage = null;
-		JCSMPSession session = null;
-		try {
-			if (vpn == null) {
-				vpn = DEFAULT_VPN;
-			}
-			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
-			session = JCSMPFactory.onlyInstance().createSession(properties);
-			session.connect();
-			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
-			BrowserProperties browserProperties = new BrowserProperties();
-			browserProperties.setEndpoint(queue);
-			browserProperties.setTransportWindowSize(1);
-			browserProperties.setWaitTimeout(1000);
-			Browser browser = session.createBrowser(browserProperties);
-			BytesXMLMessage rxMsg = null;
-			do {
-				rxMsg = browser.getNext();
-				if (rxMsg != null) {
-					String messageId = rxMsg.getApplicationMessageId();
-					System.out.println("message id: " + messageId);
-					final String payload;
-					if (rxMsg instanceof TextMessage) {
-						payload = ((TextMessage)rxMsg).getText();
-					} else {
-						payload = new String(rxMsg.getAttachmentByteBuffer().array());
-					}
-					System.out.println("PAYLOAD: " + payload);
-					if (payload != null) {
-						lastMessage = new MessageWithId(messageId, payload);
-					}
-				}
-			} while (rxMsg != null);
-		} catch (InvalidPropertiesException e) {
-			e.printStackTrace();
-		} catch (JCSMPException e) {
-			e.printStackTrace();
-		} finally {
-			if (session != null) {
-				session.closeSession();
-			}
-		}
-		return lastMessage;
+	public List<MessageWithId> peekAllUnackedMessages(String queueName, String vpn) {
+		log.info("Going to peek all unacked messages in queue: {}", queueName);
+		return peekUnackedMessages(queueName, vpn, (nextMessage, __) -> nextMessage != null);
 	}
 
 	@Override
-	public MessageWithId getEarliestUnreadMessage(String queueName, String vpn) {
-		MessageWithId firstMessage = null;
-		JCSMPSession session = null;
-		try {
-			if (vpn == null) {
-				vpn = DEFAULT_VPN;
-			}
-			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
-			session = JCSMPFactory.onlyInstance().createSession(properties);
-			session.connect();
+	public MessageWithId peekLatestUnackedMessage(String queueName, String vpn) {
+		log.info("Going to peek at last unacked message in queue: {}", queueName);
+		List<MessageWithId> allUnackedMessages = peekUnackedMessages(queueName, vpn, (nextMessage, __) -> nextMessage != null);
+		if (allUnackedMessages != null && allUnackedMessages.size() > 0) {
+			return allUnackedMessages.get(allUnackedMessages.size() - 1);
+		} else {
+			return null;
+		}
+	}
+
+	@Override
+	public MessageWithId peekEarliestUnackedMessage(String queueName, String vpn) {
+		log.info("Going to peek at earliest unacked message in queue: {}", queueName);
+		// slightly different predicate should short circuit the method so that only the first message with a non-null payload is fetched
+		List<MessageWithId> unackedMessages = peekUnackedMessages(queueName, vpn, (nextMessage, currentMessage) -> nextMessage != null && currentMessage == null);
+		if (unackedMessages != null && unackedMessages.size() > 0) {
+			log.info("Messages fetched: {}", unackedMessages.size());
+			return unackedMessages.get(0);
+		}
+		return null;
+	}
+
+	private Browser createBrowser(String queueName, JCSMPSession session) throws JCSMPException {
+			log.info("Queue name is ", queueName);
 			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
 			BrowserProperties browserProperties = new BrowserProperties();
 			browserProperties.setEndpoint(queue);
 			browserProperties.setTransportWindowSize(1);
 			browserProperties.setWaitTimeout(1000);
-			Browser browser = session.createBrowser(browserProperties);
-			BytesXMLMessage rxMsg = null;
-			do {
-				rxMsg = browser.getNext();
-				System.out.println("Got message: " + rxMsg);
-				if (rxMsg != null) {
-					String messageId = rxMsg.getApplicationMessageId();
-					System.out.println("message id: " + messageId);
-					final String payload;
-					if (rxMsg instanceof TextMessage) {
-						payload = ((TextMessage)rxMsg).getText();
-					} else {
-						payload = new String(rxMsg.getAttachmentByteBuffer().array());
-					}
-					System.out.println("PAYLOAD: " + payload);
-					if (payload != null) {
-						firstMessage = new MessageWithId(messageId, payload);
-					}
-				}
-			} while (firstMessage == null && rxMsg != null);
-		} catch (InvalidPropertiesException e) {
-			e.printStackTrace();
-		} catch (JCSMPException e) {
-			e.printStackTrace();
-		} finally {
-			if (session != null) {
-				session.closeSession();
-			}
-		}
-		return firstMessage;
+			return session.createBrowser(browserProperties);
 	}
 
 	@Override
@@ -271,18 +203,13 @@ public class SolaceWrapper implements MessageBusWrapper {
 			properties.setProperty(JCSMPProperties.VPN_NAME, vpn);
 			session = JCSMPFactory.onlyInstance().createSession(properties);
 			session.connect();
-			final Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
-			BrowserProperties browserProperties = new BrowserProperties();
-			browserProperties.setEndpoint(queue);
-			browserProperties.setTransportWindowSize(1);
-			browserProperties.setWaitTimeout(1000);
-			Browser browser = session.createBrowser(browserProperties);
+			Browser browser = createBrowser(queueName, session);
 			BytesXMLMessage rxMsg = null;
 			do {
 				rxMsg = browser.getNext();
 				if (rxMsg != null) {
 					String messageId = rxMsg.getApplicationMessageId();
-					System.out.println("message id: " + messageId);
+					log.info("message id: " + messageId);
 					// allow messages with null message ID to be acked
 					if (Objects.equals(targetMessageId, messageId)) {
 						rxMsg.ackMessage();
@@ -290,10 +217,8 @@ public class SolaceWrapper implements MessageBusWrapper {
 					}
 				}
 			} while (rxMsg != null);
-		} catch (InvalidPropertiesException e) {
-			e.printStackTrace();
 		} catch (JCSMPException e) {
-			e.printStackTrace();
+			log.error("Error encountered when sending ack", e);
 		} finally {
 			if (session != null) {
 				session.closeSession();
@@ -314,13 +239,10 @@ public class SolaceWrapper implements MessageBusWrapper {
 			if (!session.isCapable(CapabilityType.MESSAGE_REPLAY)) {
 				throw new Exception("Broker not capable of replaying messages");
 			}
-			final ReplayStartLocation replayStart;
-			if (timestamp != null) {
-				Date startDate = new Date(timestamp);
-				replayStart = JCSMPFactory.onlyInstance().createReplayStartLocationDate(startDate);
-			} else {
-				replayStart = JCSMPFactory.onlyInstance().createReplayStartLocationBeginning();
-			}
+			final ReplayStartLocation replayStart = timestamp == null ?
+				JCSMPFactory.onlyInstance().createReplayStartLocationBeginning() :
+				JCSMPFactory.onlyInstance().createReplayStartLocationDate(new Date(timestamp));
+
 			Queue queue = JCSMPFactory.onlyInstance().createQueue(queueName);
 			ConsumerFlowProperties consumerFlowProperties = new ConsumerFlowProperties();
 			consumerFlowProperties.setEndpoint(queue);
@@ -329,35 +251,30 @@ public class SolaceWrapper implements MessageBusWrapper {
 			consumerFlowProperties.setReplayStartLocation(replayStart);
 
 			ReplayFlowEventHandler consumerEventHandler = new ReplayFlowEventHandler();
-			List<MessageWithId> list = new ArrayList<>();
 			final CountDownLatch latch = new CountDownLatch(1);
-			ReplayListener listener = new ReplayListener(latch, list);
+			ReplayListener listener = new ReplayListener(latch);
 
 			FlowReceiver flowReceiver = session.createFlow(listener, consumerFlowProperties, null, consumerEventHandler);
 			flowReceiver.start();
 			latch.await(10, TimeUnit.SECONDS);
 
-			return list;
-		} catch (InvalidPropertiesException e) {
-			e.printStackTrace();
+			return listener.getMessages();
 		} finally {
 			if (session != null) {
-				System.out.println("Closing the session down!!!");
 				session.closeSession();
 			}
 		}
-		return null;
 	}
 
 	@Data
 	private static class ReplayListener implements XMLMessageListener {
 		private final CountDownLatch latch;
 		private TimerTask timerTask;
-		private final List<MessageWithId> messages;
+		@Getter
+		private final List<MessageWithId> messages = new ArrayList<>();
 
-		ReplayListener(CountDownLatch latch, List<MessageWithId> messages) {
+		ReplayListener(CountDownLatch latch) {
 			this.latch = latch;
-			this.messages = messages;
 			Timer timer = new Timer();
 			timerTask = new TimerTask(){
 				@Override
@@ -370,8 +287,7 @@ public class SolaceWrapper implements MessageBusWrapper {
 
 		@Override
 		public void onException(JCSMPException e) {
-			System.out.println("Error during replay msg: " + e);
-			e.printStackTrace();
+			log.error("Error during replay msg", e);
 			timerTask.cancel();
 			// immediately cancel
 			timerTask.run();
@@ -380,25 +296,19 @@ public class SolaceWrapper implements MessageBusWrapper {
 		@Override
 		public void onReceive(BytesXMLMessage msg) {
 			timerTask.cancel();
-			System.out.println("Received replay msg");
+			log.info("Received replay msg");
 
-			boolean isRedelivered = msg.getRedelivered();
+			final String content;
 			if (msg instanceof TextMessage) {
 				TextMessage txtMsg = (TextMessage) msg;
-				String content = txtMsg.getText();
-				MessageWithId messageWithId = new MessageWithId(txtMsg.getApplicationMessageId(), content);
-				messages.add(messageWithId);
+				content = txtMsg.getText();
 			} else {
-				String content = new String(msg.getAttachmentByteBuffer().array());
-				MessageWithId messageWithId = new MessageWithId(msg.getApplicationMessageId(), content);
-				messages.add(messageWithId);
+				content = new String(msg.getAttachmentByteBuffer().array());
 			}
-			System.out.println("Message: " + messages.get(messages.size() - 1) + " is redelivered? " + isRedelivered);
-			// not supported on the EndPoint
-			//System.out.println("delivery count: " + msg.getDeliveryCount());
-			//System.out.println("delivery mode: " + msg.getDeliveryMode());
-			System.out.println("properties: " + msg.getProperties());
-			// cancel if no new messages in next second
+			MessageWithId messageWithId = new MessageWithId(msg.getApplicationMessageId(), content);
+			messages.add(messageWithId);
+
+			// reset the timer
 			Timer timer = new Timer();
 			timerTask = new TimerTask(){
 				@Override
@@ -416,7 +326,7 @@ public class SolaceWrapper implements MessageBusWrapper {
 
 		@Override
 		public void handleEvent(Object source, FlowEventArgs event) {
-			System.out.println("Consumer received flow event: " + event);
+			log.info("Consumer received flow event: " + event);
 			if (event.getEvent() == FlowEvent.FLOW_DOWN) {
 				if (event.getException() instanceof JCSMPErrorResponseException) {
 					JCSMPErrorResponseException ex = (JCSMPErrorResponseException) event.getException();
@@ -435,10 +345,10 @@ public class SolaceWrapper implements MessageBusWrapper {
 							break;
 					}
 				} else {
-					System.out.println("Got different type of exception: " + event.getException());
+					log.info("Got different type of exception: " + event.getException());
 				}
 			} else {
-				System.out.println("Got replay event: " + event.getEvent());
+				log.info("Got replay event: " + event.getEvent());
 			}
 		}
 	}
@@ -449,24 +359,25 @@ public class SolaceWrapper implements MessageBusWrapper {
 		private PubCallback(CountDownLatch latch) {
 			this.latch = latch;
 		}
+
 		@Override
 		public void handleErrorEx(Object key, JCSMPException e, long timestamp) {
-			System.out.println("Error response received: " + key + " error: " + e);
+			log.error("Error response received: {}", key, e);
 			if (key instanceof MsgInfo) {
 				((MsgInfo) key).acked = true;
-				System.out.println("Message response (rejected) received for " + key + ", error was " + e);
 			}
 			this.key = key;
 			latch.countDown();
 		}
+
 		@Override
 		public void responseReceivedEx(Object key) {
-			System.out.println("Response received: " + key);
+			log.info("Response received: {}", key);
 			if (key instanceof MsgInfo) {
 				MsgInfo info = (MsgInfo) key;
 				info.acked = true;
 				info.publishedSuccessfully = true;
-				System.out.println("Message response (accepted) received for " + key);
+				log.info("Message response (accepted) received for {}", key);
 			}
 			this.key = key;
 			latch.countDown();
