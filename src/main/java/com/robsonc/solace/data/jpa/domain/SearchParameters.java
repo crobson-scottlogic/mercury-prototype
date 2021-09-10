@@ -1,7 +1,5 @@
 package com.robsonc.solace.data.jpa.domain;
 
-import java.sql.Date;
-
 import lombok.Builder;
 import lombok.Data;
 
@@ -11,7 +9,7 @@ public class SearchParameters {
 	private String messageVpn;
 	private String queueName;
 	private String destination;
-	private Date earliestPublished;
-	private Date latestPublished;
+	private Long earliestPublished;
+	private Long latestPublished;
 	private String searchText;
 }

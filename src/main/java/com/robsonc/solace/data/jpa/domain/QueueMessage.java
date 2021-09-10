@@ -1,6 +1,6 @@
 package com.robsonc.solace.data.jpa.domain;
 
-import java.sql.Date;
+import java.sql.Timestamp;
 import java.util.Objects;
 
 import javax.persistence.Entity;
@@ -36,13 +36,15 @@ public class QueueMessage {
 	private DestinationType destinationType;
 	@Setter
 	private String applicationId;
-	private Date published;
+	@Setter
+	private Timestamp published;
 
-	public QueueMessage(String content, String messageVpn, String destination, DestinationType destinationType, String applicationId) {
+	public QueueMessage(String content, String messageVpn, String destination, DestinationType destinationType, String applicationId, Timestamp published) {
 		this.content = Objects.requireNonNull(content);
 		this.messageVpn = messageVpn;
 		this.destination = Objects.requireNonNull(destination);
 		this.destinationType = Objects.requireNonNull(destinationType);
 		this.applicationId = Objects.requireNonNull(applicationId);
+		this.published = published;
 	}
 }

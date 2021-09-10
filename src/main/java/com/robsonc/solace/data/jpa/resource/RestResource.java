@@ -1,6 +1,7 @@
 package com.robsonc.solace.data.jpa.resource;
 
-import java.sql.Date;
+import java.sql.Timestamp;
+import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
@@ -25,7 +26,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import lombok.extern.slf4j.Slf4j;
+
 @RestController
+@Slf4j
 public class RestResource {
 	@Autowired
 	private MessageBusWrapper messageBusWrapper;
@@ -38,15 +42,15 @@ public class RestResource {
 
 	@PostMapping(value = "/publish", path = "/publish", consumes = "APPLICATION/JSON", produces = "APPLICATION/JSON")
 	public ResponseEntity<String> publishToMessageBus(@RequestBody MessageInDto messageInDto) {
-		//System.out.println(messageInDto);
 		List<QueueMessage> messages = repository.findAll();
-		System.out.println("Requested messages. Got list of size: " + messages.size());
+		log.info("Requested messages. Got list of size: {}", messages.size());
 		for (var message : messages) {
-			System.out.println(message.toString());
+			log.info(message.toString());
 		}
 
 		var uuid = UUID.randomUUID().toString();
-		var message = new QueueMessage(messageInDto.getPayload(), messageInDto.getMessageVpn(), messageInDto.getDestination(), DestinationType.valueOf(messageInDto.getDestinationType().toUpperCase()), uuid);
+		Timestamp timestamp = new Timestamp(System.currentTimeMillis());
+		var message = new QueueMessage(messageInDto.getPayload(), messageInDto.getMessageVpn(), messageInDto.getDestination(), DestinationType.valueOf(messageInDto.getDestinationType().toUpperCase()), uuid, timestamp);
 		repository.save(message);
 
 		var future = messageBusWrapper.writeMessageToQueue(messageInDto.getDestination(), messageInDto.getPayload(), uuid, messageInDto.getMessageVpn());
@@ -55,42 +59,46 @@ public class RestResource {
 			String responseBody = "Received: " + key;
 			return ResponseEntity.ok(responseBody);
 		} catch (InterruptedException | ExecutionException | TimeoutException e) {
-			e.printStackTrace();
+			log.error("Problem encountered when writing message to queue", e);
 			return ResponseEntity.internalServerError().build();
 		}
 	}
 
 	@GetMapping(value = "/getall", produces = "APPLICATION/JSON")
 	public List<MessageWithId> getLatestMessages(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
-		System.out.println("============================");
-		System.out.println("queueName: " + queueName);
-		System.out.println("============================");
+		log.info("Getting all for queueName: {}", queueName);
 		return messageBusWrapper.getLatestUnreadMessages(queueName, vpn);
 	}
 
 	@GetMapping(value = "/get", produces = "APPLICATION/JSON")
 	public MessageWithId getLatestMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
+		log.info("Getting latest message for queueName: {}", queueName);
 		return messageBusWrapper.getLatestUnreadMessage(queueName, vpn);
 	}
 	
 	@GetMapping(value = "/next", produces = "APPLICATION/JSON")
 	public MessageWithId getEarliestUnackedMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "vpn", required = false) String vpn) {
+		log.info("Getting earliest unacked message for queueName: {}", queueName);
 		return messageBusWrapper.getEarliestUnreadMessage(queueName, vpn);
 	}
 	
 	@GetMapping(value = "/ack")
 	public void ackMessage(@RequestParam(name = "queue") String queueName, @RequestParam(name = "msg", required = false) String messageId, @RequestParam(name = "vpn", required = false) String vpn) {
-		System.out.println("Message ID is: " + messageId);
+		log.info("Acking message: {}", messageId);
 		messageBusWrapper.ackMessage(queueName, messageId, vpn);
 	}
 
 	@GetMapping(value = "/replay", produces = "APPLICATION/JSON")
 	public List<MessageWithId> replay(@RequestParam(name = "queue") String queueName, @RequestParam(name = "replayTime", required = false) Long replayTime, @RequestParam(name = "vpn", required = false) String vpn) {
-		System.out.println("Replaying queue " + queueName + " from " + new java.util.Date(replayTime));
+		if (replayTime != null) {
+			log.info("Replaying queue {} from {}", queueName, new Date(replayTime));
+		} else {
+			log.info("Replaying queue {} from beginning of queue", queueName);
+		}
 		try {
 			return messageBusWrapper.replay(queueName, replayTime, vpn);
 		} catch (Exception e) {
-			e.printStackTrace();
+			log.error("Error encountered when trying to replay queue", e);
 			return null;
 		}
 	}
@@ -100,8 +108,8 @@ public class RestResource {
 			@RequestParam(name = "messageVpn", required = false) String messageVpn,
 			@RequestParam(name = "queueName", required = false) String queueName,
 			@RequestParam(name = "destination", required = false) String destination,
-			@RequestParam(name = "earliestPublished", required = false) Date earliestPublished,
-			@RequestParam(name = "latestPublished", required = false) Date latestPublished,
+			@RequestParam(name = "earliestPublished", required = false) Long earliestPublished,
+			@RequestParam(name = "latestPublished", required = false) Long latestPublished,
 			@RequestParam(name = "searchText", required = false) String searchText) {
 		SearchParameters parameters = SearchParameters.builder()
 			.messageVpn(messageVpn)
@@ -111,9 +119,9 @@ public class RestResource {
 			.latestPublished(latestPublished)
 			.searchText(searchText)
 			.build();
-		System.out.println(parameters.toString());
+		log.info("Searching via parameters: {}", parameters.toString());
 		var matchingMessages = searchService.search(parameters);
-		// actually, I think search will need a lot more information than this - e.g. publisher name, published date, etc.
+		// actually, I think search will ultimately need a lot more information than this - e.g. publisher name, published date, etc.
 		return matchingMessages.stream()
 			.map(msg -> new MessageWithId(msg.getApplicationId(), msg.getContent()))
 			.collect(Collectors.toList());
